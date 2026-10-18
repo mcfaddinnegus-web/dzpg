@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>网站 SEO 基础爬虫检测工具</title>
+<meta name="description" content="检测本站可访问页面的标题、描述、H1、规范链接与站内链接。">
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#1f2937;background:#f5f7fb}
+body{max-width:1050px;margin:24px auto;padding:0 16px}
+main{background:white;border:1px solid #e5e7eb;border-radius:14px;padding:20px}
+h1{font-size:1.5rem;margin-top:0}p{line-height:1.6}
+button{border:0;border-radius:8px;background:#155eef;color:#fff;padding:10px 16px;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+input{width:min(100%,620px);padding:10px;border:1px solid #cbd5e1;border-radius:8px}
+table{width:100%;border-collapse:collapse;margin-top:16px;font-size:14px}
+th,td{border-bottom:1px solid #e5e7eb;text-align:left;padding:10px;vertical-align:top;overflow-wrap:anywhere}
+th{background:#f8fafc} .muted{color:#64748b}.good{color:#067647}.warn{color:#b54708}
+#status{margin-top:12px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<main>
+<h1>网站 SEO 基础爬虫检测工具</h1>
+<p>只抓取当前网站同源页面；这是基础技术检查，不会读取 Google 或百度的内部索引数据库，也不能直接判断关键词排名。</p>
+<p><label for="start">起始网址：</label><br><input id="start" value="https://mcfaddinnegus-web.github.io/dzpg/" type="url"></p>
+<p><label for="limit">最多检查页面数（1–30）：</label><br><input id="limit" type="number" min="1" max="30" value="15"></p>
+<button id="run">开始检查</button>
+<button id="csv" disabled>导出 CSV</button>
+<div id="status" class="muted">提示：建议把本文件上传到同一 GitHub Pages 站点后再打开，否则浏览器跨域限制可能阻止读取目标网页。</div>
+<div style="overflow-x:auto"><table><thead><tr><th>页面</th><th>HTTP</th><th>Title</th><th>Description</th><th>H1</th><th>站内链接</th><th>问题提示</th></tr></thead><tbody id="rows"></tbody></table></div>
+</main>
+<script>
+const $=id=>document.getElementById(id); let results=[];
+function csvEscape(v){return '"'+String(v??'').replace(/"/g,'""')+'"'}
+function absSameOrigin(href, origin){try{const u=new URL(href,origin);if(u.origin!==origin||!/^https?:$/.test(u.protocol))return null;u.hash='';return u.href}catch{return null}}
+$('run').addEventListener('click',async()=>{
+ const start=$('start').value.trim();let root;
+ try{root=new URL(start)}catch{$('status').textContent='起始网址格式不正确。';return}
+ if(!['https:','http:'].includes(root.protocol)){$('status').textContent='请使用 http 或 https 网址。';return}
+ const max=Math.max(1,Math.min(30,Number($('limit').value)||15));
+ const queue=[root.href],seen=new Set(),origin=root.origin;results=[];$('rows').innerHTML='';$('run').disabled=true;$('csv').disabled=true;
+ $('status').textContent='正在抓取同源网页……如果出现跨域/网络错误，请将工具上传到目标网站同一域名下运行。';
+ while(queue.length&&seen.size<max){
+  const url=queue.shift();if(seen.has(url))continue;seen.add(url);
+  try{
+   const res=await fetch(url,{redirect:'follow'});const type=res.headers.get('content-type')||'';
+   if(!res.ok)throw new Error('HTTP '+res.status);
+   if(!type.includes('text/html'))continue;
+   const html=await res.text(),doc=new DOMParser().parseFromString(html,'text/html');
+   const title=(doc.querySelector('title')?.textContent||'').trim();
+   const desc=(doc.querySelector('meta[name="description" i]')?.content||'').trim();
+   const h1=[...doc.querySelectorAll('h1')].map(x=>x.textContent.trim()).filter(Boolean).join(' | ');
+   const canon=doc.querySelector('link[rel="canonical" i]')?.href||'';
+   const links=[...doc.querySelectorAll('a[href]')].map(a=>absSameOrigin(a.getAttribute('href'),origin)).filter(Boolean);
+   for(const l of links)if(!seen.has(l)&&!queue.includes(l)&&queue.length<max*3)queue.push(l);
+   const issues=[];if(!title)issues.push('缺少 title');else if(title.length<10)issues.push('title 偏短');if(!desc)issues.push('缺少 description');if(!h1)issues.push('缺少 H1');if(canon&&new URL(canon,origin).origin!==origin)issues.push('canonical 指向其他域名');
+   const row={url:res.url||url,status:res.status,title,description:desc,h1,links:links.length,issues:issues.join('；')||'未发现基础问题'};
+   results.push(row);render(row);
+  }catch(e){const row={url,status:'失败',title:'',description:'',h1:'',links:0,issues:'无法读取：'+e.message+'（检查网址、网络或跨域限制）'};results.push(row);render(row)}
+ }
+ $('status').textContent='检查完成：读取到 '+results.length+' 个 HTML 页面。此结果只反映基础 SEO 技术项，不代表搜索引擎已收录。';
+ $('run').disabled=false;$('csv').disabled=results.length===0;
+});
+function render(r){const tr=document.createElement('tr');[r.url,r.status,r.title,r.description,r.h1,r.links,r.issues].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.appendChild(td)});$('rows').appendChild(tr)}
+$('csv').addEventListener('click',()=>{const head=['URL','HTTP','Title','Description','H1','站内链接数','问题提示'];const lines=[head,...results.map(r=>[r.url,r.status,r.title,r.description,r.h1,r.links,r.issues])].map(row=>row.map(csvEscape).join(','));const blob=new Blob(['\ufeff'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='seo-check.csv';a.click();URL.revokeObjectURL(a.href)});
+</script>
+</body>
+</html>
